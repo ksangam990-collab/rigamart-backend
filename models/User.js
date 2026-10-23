@@ -102,6 +102,28 @@ const userSchema = new mongoose.Schema(
     isBanned: {
       type: Boolean,
       default: false
+    },
+    failedLoginAttempts: {
+      type: Number,
+      default: 0
+    },
+    lockUntil: {
+      type: Date,
+      default: null
+    },
+    googleId: {
+      type: String,
+      default: null,
+      sparse: true
+    },
+    avatar: {
+      type: String,
+      default: null
+    },
+    authProvider: {
+      type: String,
+      enum: ['local', 'google'],
+      default: 'local'
     }
   },
   {

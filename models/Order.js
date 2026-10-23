@@ -69,6 +69,66 @@ const timelineSchema = new mongoose.Schema(
   { _id: false }
 );
 
+const returnRequestSchema = new mongoose.Schema(
+  {
+    reason: {
+      type: String,
+      required: true
+    },
+    reasonCategory: {
+      type: String,
+      enum: [
+        'DEFECTIVE_DAMAGED',
+        'WRONG_ITEM',
+        'NOT_AS_DESCRIBED',
+        'SIZE_FIT_ISSUE',
+        'QUALITY_UNSATISFACTORY',
+        'OTHER'
+      ],
+      default: 'OTHER'
+    },
+    comments: {
+      type: String,
+      default: ''
+    },
+    photos: {
+      type: [String],
+      default: []
+    },
+    resolutionType: {
+      type: String,
+      enum: ['REFUND', 'REPLACEMENT'],
+      default: 'REFUND'
+    },
+    status: {
+      type: String,
+      enum: ['Requested', 'Approved', 'Rejected', 'Pickup_Scheduled', 'Item_Received', 'Refunded'],
+      default: 'Requested'
+    },
+    sellerNotes: {
+      type: String,
+      default: ''
+    },
+    pickupDate: {
+      type: Date,
+      default: null
+    },
+    refundAmount: {
+      type: Number,
+      default: 0
+    },
+    requestedAt: {
+      type: Date,
+      default: Date.now
+    },
+    resolvedAt: {
+      type: Date,
+      default: null
+    }
+  },
+  { _id: false }
+);
+
 const orderSchema = new mongoose.Schema(
   {
     orderNumber: {
@@ -118,7 +178,7 @@ const orderSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['Placed', 'Confirmed', 'Shipped', 'Delivered', 'Cancelled', 'Returned'],
+      enum: ['Placed', 'Confirmed', 'Shipped', 'Delivered', 'Cancelled', 'Returned', 'Return Requested'],
       default: 'Placed'
     },
     statusTimeline: {
@@ -146,6 +206,15 @@ const orderSchema = new mongoose.Schema(
       required: true,
       default: 0
     },
+    discountPrice: {
+      type: Number,
+      default: 0,
+      min: [0, 'Discount price cannot be negative']
+    },
+    coupon: {
+      code: { type: String, default: null },
+      discount: { type: Number, default: 0 }
+    },
     totalAmount: {
       type: Number,
       required: [true, 'Total order amount is required'],
@@ -167,14 +236,29 @@ const orderSchema = new mongoose.Schema(
       type: String,
       default: ''
     },
+    returnRequest: {
+      type: returnRequestSchema,
+      default: null
+    },
     invoiceUrl: {
       type: String,
       default: ''
+    },
+    tracking: {
+      carrier: { type: String, default: 'Delhivery Express' },
+      awbNumber: { type: String, default: '' },
+      estimatedDelivery: { type: Date, default: null },
+      courierPartner: {
+        name: { type: String, default: 'Rajesh Sharma' },
+        phone: { type: String, default: '+91 98234 11092' }
+      },
+      currentLocation: { type: String, default: 'Fulfillment Hub' }
     }
   },
   {
     timestamps: true
   }
+
 );
 
 // Indexes for order lookup and seller/admin analytics

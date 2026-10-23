@@ -19,8 +19,14 @@ const orderRoutes = require('./routes/orderRoutes');
 const reviewRoutes = require('./routes/reviewRoutes');
 const sellerRoutes = require('./routes/sellerRoutes');
 const adminRoutes = require('./routes/adminRoutes');
+const couponRoutes = require('./routes/couponRoutes');
+const notificationRoutes = require('./routes/notificationRoutes');
+const aiRoutes = require('./routes/aiRoutes');
 const { verifyEmailConfig } = require('./config/nodemailer');
 const { initKeepAlive } = require('./utils/keepAlive');
+const mongoSanitize = require('express-mongo-sanitize');
+const hpp = require('hpp');
+const { globalLimiter, authLimiter } = require('./middleware/rateLimiter');
 
 const app = express();
 
@@ -28,42 +34,54 @@ const app = express();
 connectDB();
 verifyEmailConfig();
 
-// Secure HTTP headers
-app.use(helmet());
+// Secure HTTP headers with explicit cross-origin policy
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+    crossOriginEmbedderPolicy: false
+  })
+);
 
 // Trust reverse proxies (Render, AWS, Cloudflare) for secure cookies & HTTPS protocol detection
 app.set('trust proxy', 1);
 
-// Cross-Origin Resource Sharing setup
+// Cross-Origin Resource Sharing setup: strict domain whitelisting
 const configuredOrigins = process.env.CLIENT_URL
   ? process.env.CLIENT_URL.split(',').map((u) => u.trim())
   : [];
 
 const allowedOrigins = [
   ...configuredOrigins,
+  'https://rigamart-frontend.vercel.app',
   'http://localhost:5173',
   'http://localhost:3000',
   'http://127.0.0.1:5173'
 ].filter(Boolean);
 
+// Strict regex matching for official Rigamart production & preview branches only
+const isAllowedRigamartDomain = (origin) => {
+  if (!origin) return true; // Server-to-server, curl, mobile native
+  if (allowedOrigins.includes(origin)) return true;
+  // Match https://rigamart-frontend.vercel.app or https://rigamart-frontend-<branch>.vercel.app
+  if (/^https:\/\/rigamart-frontend(-[a-z0-9-]+)?\.vercel\.app$/i.test(origin)) return true;
+  // Allow localhost during development only
+  if (process.env.NODE_ENV !== 'production' && (origin.includes('localhost') || origin.includes('127.0.0.1'))) {
+    return true;
+  }
+  return false;
+};
+
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow requests with no origin (like mobile apps, curl, or Postman),
-      // explicit client origins, and Vercel preview/production domains (*.vercel.app)
-      if (
-        !origin ||
-        allowedOrigins.includes(origin) ||
-        origin.endsWith('.vercel.app') ||
-        (process.env.NODE_ENV !== 'production' && origin.includes('localhost'))
-      ) {
+      if (isAllowedRigamartDomain(origin)) {
         return callback(null, true);
       }
-      return callback(new Error('Blocked by CORS policy'));
+      return callback(new Error('Blocked by CORS policy: Origin not authorized by Rigamart security gateway'));
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization']
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
   })
 );
 
@@ -73,6 +91,15 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Cookie parser for secure httpOnly refresh tokens
 app.use(cookieParser());
+
+// Data sanitization against NoSQL query injection (strips $ and .)
+app.use(mongoSanitize());
+
+// Prevent HTTP parameter pollution attacks
+app.use(hpp());
+
+// Global API rate limiter (150 req/min per IP)
+app.use('/api', globalLimiter);
 
 // Request logger in development
 if (process.env.NODE_ENV === 'development') {
@@ -100,8 +127,8 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// API Routes
-app.use('/api/auth', authRoutes);
+// API Routes (Strict rate limiting applied on authentication endpoints)
+app.use('/api/auth', authLimiter, authRoutes);
 app.use('/api/categories', categoryRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api/upload', uploadRoutes);
@@ -112,6 +139,9 @@ app.use('/api/orders', orderRoutes);
 app.use('/api/reviews', reviewRoutes);
 app.use('/api/seller', sellerRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/coupons', couponRoutes);
+app.use('/api/notifications', notificationRoutes);
+app.use('/api/ai', aiRoutes);
 
 // Root fallback route
 app.get('/', (req, res) => {
@@ -133,15 +163,21 @@ app.use((req, res, next) => {
   });
 });
 
-// Global Centralized Error Handler
+// Global Centralized Error Handler (Masks internal stack traces in production)
 app.use((err, req, res, next) => {
   const statusCode = err.statusCode || (res.statusCode === 200 ? 500 : res.statusCode);
+  const isProduction = process.env.NODE_ENV === 'production';
+
+  // In production, mask internal 500 errors to prevent server path and database disclosure
+  const safeMessage = isProduction && statusCode === 500
+    ? 'An unexpected internal server error occurred. Please try again later.'
+    : err.message || 'Internal Server Error';
 
   res.status(statusCode).json({
     success: false,
-    message: err.message || 'Internal Server Error',
+    message: safeMessage,
     data: null,
-    ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
+    ...(!isProduction && { stack: err.stack })
   });
 });
 

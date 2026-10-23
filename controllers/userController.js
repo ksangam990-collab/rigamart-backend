@@ -1,3 +1,4 @@
+const axios = require('axios');
 const User = require('../models/User');
 const Product = require('../models/Product');
 
@@ -32,10 +33,11 @@ const getProfile = async (req, res) => {
  */
 const updateProfile = async (req, res) => {
   try {
-    const { name, mobile } = req.body;
+    const { name, mobile, avatar } = req.body;
     const user = await User.findById(req.user._id);
 
     if (name) user.name = name.trim();
+    if (avatar !== undefined) user.avatar = avatar;
     if (mobile) {
       if (!/^[6-9]\d{9}$/.test(mobile.trim())) {
         return res.status(400).json({
@@ -58,6 +60,7 @@ const updateProfile = async (req, res) => {
           name: user.name,
           email: user.email,
           mobile: user.mobile,
+          avatar: user.avatar,
           role: user.role,
           isVerified: user.isVerified
         }
@@ -246,6 +249,95 @@ const deleteAddress = async (req, res) => {
 };
 
 /**
+ * @desc    Reverse geocode coordinates into structured Indian address fields
+ * @route   GET /api/users/reverse-geocode?lat=&lon=
+ * @access  Private
+ */
+const reverseGeocodeLocation = async (req, res) => {
+  try {
+    const { lat, lon } = req.query;
+
+    const latitude = parseFloat(lat);
+    const longitude = parseFloat(lon);
+
+    if (
+      isNaN(latitude) ||
+      isNaN(longitude) ||
+      latitude < -90 ||
+      latitude > 90 ||
+      longitude < -180 ||
+      longitude > 180
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: 'Valid latitude (-90 to 90) and longitude (-180 to 180) parameters are required',
+        data: null
+      });
+    }
+
+    // Query OpenStreetMap Nominatim reverse geocoding API with custom User-Agent
+    const response = await axios.get('https://nominatim.openstreetmap.org/reverse', {
+      params: {
+        lat: latitude,
+        lon: longitude,
+        format: 'json',
+        addressdetails: 1
+      },
+      headers: {
+        'User-Agent': 'Rigamart-ECommerce-Platform/1.0 (support@rigamart.com)'
+      },
+      timeout: 6000
+    });
+
+    const addr = response.data?.address || {};
+
+    // Build street from house number, building/road, and area
+    const streetParts = [
+      addr.house_number,
+      addr.building,
+      addr.road || addr.pedestrian || addr.street,
+      addr.suburb || addr.neighbourhood
+    ].filter(Boolean);
+
+    const street = streetParts.length > 0
+      ? streetParts.join(', ')
+      : response.data?.display_name?.split(',').slice(0, 2).join(', ') || '';
+
+    const city =
+      addr.city ||
+      addr.town ||
+      addr.village ||
+      addr.municipality ||
+      addr.district ||
+      addr.county ||
+      '';
+    const state = addr.state || addr.state_district || '';
+    const pincode = addr.postcode || '';
+    const landmark = addr.neighbourhood || addr.suburb || addr.quarter || addr.amenity || '';
+
+    res.status(200).json({
+      success: true,
+      message: 'Coordinates resolved successfully',
+      data: {
+        street,
+        city,
+        state,
+        pincode,
+        landmark,
+        displayName: response.data?.display_name || ''
+      }
+    });
+  } catch (error) {
+    console.error('Reverse geocode error:', error.message);
+    res.status(502).json({
+      success: false,
+      message: 'Failed to resolve location address. Please enter address manually.',
+      data: null
+    });
+  }
+};
+
+/**
  * @desc    Get user's wishlist populated with product summaries
  * @route   GET /api/users/wishlist
  * @access  Private
@@ -364,6 +456,7 @@ module.exports = {
   addAddress,
   updateAddress,
   deleteAddress,
+  reverseGeocodeLocation,
   getWishlist,
   addToWishlist,
   removeFromWishlist
